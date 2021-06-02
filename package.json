@@ -1,12 +1,12 @@
 {
-  "name": "lance_table",
+  "name": "client_tools",
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
   "dependencies": {},
   "devDependencies": {
     "electron": "^13.0.1",
-    "exceljs": "^4.2.1"
+    "xlsx": "^0.17.0"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
