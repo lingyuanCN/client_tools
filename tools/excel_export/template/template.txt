@@ -3,14 +3,11 @@ local record_#cfg_name# = {}
   
 #cfg_all_keys#
 
-
 #cfg_name# = {
-   _data = {
+    _data = {
 #cfg_all_data#
     }
 }
-
-
 
 local __index_#unique_key_group# = {
 #key_reverse_index#
@@ -18,10 +15,7 @@ local __index_#unique_key_group# = {
 
 local __key_map = {
 #key_map#
-
 }
-
-
 
 local m = { 
     __index = function(t, k) 
@@ -34,20 +28,14 @@ local m = {
                 return o
             end 
         end
-        
         assert(__key_map[k], "cannot find " .. k .. " in record_#cfg_name#")
-        
-        
         return t._raw[__key_map[k]]
     end
 }
 
-
 function #cfg_name#.getLength()
     return ##cfg_name#._data
 end
-
-
 
 function #cfg_name#.hasKey(k)
   if __key_map[k] == nil then
@@ -57,31 +45,22 @@ function #cfg_name#.hasKey(k)
   end
 end
 
-
----
 --@return @class record_#cfg_name#
 function #cfg_name#.indexOf(index)
     if index == nil then
         return nil
     end
-    
     return setmetatable({_raw = #cfg_name#._data[index]}, m)
-    
 end
 
----
 --@return @class record_#cfg_name#
-function #cfg_name#.get(#key_argument#)
-    
+function #cfg_name#.get(#key_params#)
     local k = #unique_key_link#
     return #cfg_name#.indexOf(__index_#unique_key_group#[k])
-        
 end
 
-
-
-function #cfg_name#.set(#key_argument#, key, value)
-    local record = #cfg_name#.get(#key_argument#)
+function #cfg_name#.set(#key_params#, key, value)
+    local record = #cfg_name#.get(#key_params#)
     if record then
         local keyIndex = __key_map[key]
         if keyIndex then
@@ -89,9 +68,6 @@ function #cfg_name#.set(#key_argument#, key, value)
         end
     end
 end
-
-
-
 
 function #cfg_name#.get_index_data()
     return __index_#unique_key_group#

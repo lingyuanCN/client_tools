@@ -2,6 +2,8 @@ const XLSX = require('xlsx')
 const fs = require('fs')
 
 const TEMPLATE_PATH = './tools/excel_export/template/template.txt'
+const CLIENT_RESULT_PATH = './tools/excel_export/result/client/#file_name#.lua'
+const SERVER_RESULT_PATH = './tools/excel_export/result/server/#file_name#.xml'
 
 const CSVToArray = (data, delimiter = ',', omitFirstRow = false) =>
     data
@@ -85,13 +87,11 @@ function processExcelFile(file) {
     readWorkbookFromLocalFile(file, function(workbook){
         formatWorkbookData(workbook, file, template)
     })
-
 }
 
 function readWorkbookFromLocalFile(file, callback) {
 	let reader = new FileReader()
 	reader.onload = function(e) {
-        console.log(e)
 		let data = e.target.result
 		let workbook = XLSX.read(data, {type: 'binary'})
 		if(callback) callback(workbook)
@@ -104,38 +104,118 @@ function formatWorkbookData(workbook, file, template) {
     let fullFileName = (file.name).toString()
     let fileName = fullFileName.match(/.*(?=\.)/g)[0]
     template = template.replace(/#cfg_name#/g, fileName)
-    console.log(template)
 
     let sheetNames = workbook.SheetNames
     let worksheet = workbook.Sheets[sheetNames[SHEET_INDEX - 1]]
 
     let a1 = worksheet['A1'].v
     let keyList = a1.split(',')
-    console.log(keyList)
 
     // TODO validate sheet correction
 
     let csv = XLSX.utils.sheet_to_csv(worksheet)
     let sheetArray = CSVToArray(csv, ',', true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
-    console.log(sheetArray)
 
     let valueTypeList = sheetArray[ROW_MAP.VALUE_TYPE]
     let keyDescList = sheetArray[ROW_MAP.KEY_DESC]
     let isServerClientList = sheetArray[ROW_MAP.SERVER_CLIENT]
     let keyNameList = sheetArray[ROW_MAP.KEY_NAME]
 
+    // 替换字段名
+    // 替换字段索引
     let allKeyInfo = ''
+    let keyMap = ''
+    let keyIndexMap = {}
+    let keyIndex = 1
     for (let i = 0; i < keyNameList.length; i++) {
         let isServerClient = isServerClientList[i]
+        const curKey = keyNameList[i]
         if (isServerClient == KEY_TYPE.CLIENT || isServerClient == KEY_TYPE.BOTH) {
-            console.log(valueTypeList[i])
             let defaultValue = valueTypeList[i] == 'int' ? '0' : '\"\"' 
-            let keyInfo = 'record_' + fileName + '.' + keyNameList[i] + ' = ' + defaultValue + ' -- ' + keyDescList[i]
+            let keyInfo = 'record_' + fileName + '.' + curKey + ' = ' + defaultValue + ' -- ' + keyDescList[i]
             allKeyInfo += keyInfo + '\n'
+
+            keyMap += '    ' + curKey + ' = ' + keyIndex + '\n'
+            keyIndex += 1
+        }
+        for (let index = 0; index < keyList.length; index++) {
+            const key = keyList[index];
+            if (curKey == key) {
+                keyIndexMap[i] = true
+            }
         }
     }
     template = template.replace(/#cfg_all_keys#/g, allKeyInfo)
-    console.log(template)
+    template = template.replace(/#key_map#/g, keyMap)
+
+    // 替换所有数据
+    let allCfgData = ''
+    for (let row = ROW_MAP.VALUE_START; row < sheetArray.length; row++) {
+        const rowInfo = sheetArray[row];
+        if (rowInfo[0] == '') {
+            break
+        }
+
+        let cfgData = '        [' + (row - ROW_MAP.VALUE_START + 1) + '] = {'
+        for (let i = 0; i < rowInfo.length; i++) {
+            const data = rowInfo[i];
+            let value = data
+            if (valueTypeList[i] == 'string') {
+                value = '\"' + value + '\"'
+            }
+
+            let isServerClient = isServerClientList[i]
+            if (isServerClient == KEY_TYPE.CLIENT || isServerClient == KEY_TYPE.BOTH) {
+                cfgData += value + ','
+            }
+        }
+        
+        allCfgData += cfgData + '}\n'
+    }
+    template = template.replace(/#cfg_all_data#/g, allCfgData)
+
+    // 替换key相关
+    let keyGroup = ''
+    let keyParams = ''
+    let uniqueKeyLink = ''
+    for (let i = 0; i < keyList.length; i++) {
+        const key = keyList[i];
+        keyGroup += key
+        keyParams += key
+        uniqueKeyLink += key
+        if (i != keyList.length - 1) {
+            keyGroup += '_'
+            keyParams += ', '
+            uniqueKeyLink += ' .. _ .. '
+        }
+    }
+    template = template.replace(/#unique_key_group#/g, keyGroup)
+    template = template.replace(/#key_params#/g, keyParams)
+    template = template.replace(/#unique_key_link#/g, uniqueKeyLink)
+
+    // 替换反向索引
+    let keyReverseIndex = ''
+    for (let row = ROW_MAP.VALUE_START; row < sheetArray.length; row++) {
+        const rowInfo = sheetArray[row];
+        if (rowInfo[0] == '') {
+            break
+        }
+        let keyGroupValue = ''
+        for (let i = 0; i < rowInfo.length; i++) {
+            if (keyIndexMap[i]) {
+                const data = rowInfo[i];
+                if (keyGroupValue != '') {
+                    keyGroupValue += '_'
+                }
+                keyGroupValue += data
+            }
+        }
+        keyGroupValue = '\"' + keyGroupValue + '\"'
+        keyReverseIndex += '    [' + keyGroupValue + '] = ' + (row - ROW_MAP.VALUE_START + 1) + ',\n'
+    }
+    template = template.replace(/#key_reverse_index#/g, keyReverseIndex)
+
+    saveFile(CLIENT_RESULT_PATH.replace(/#file_name#/g, fileName), template)
 }
 
 function readLocalFile(path, callback) {
@@ -166,5 +246,9 @@ function convertToLuaFile() {
 }
 
 function saveFile(path, content) {
-    
+    fs.writeFile(path, content,  function(err) {
+        if (err) {
+            return console.error(err)
+        }
+    })
 }
