@@ -3,13 +3,27 @@
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
-  "dependencies": {},
-  "devDependencies": {
-    "electron": "^13.0.1",
+  "dependencies": {
     "xlsx": "^0.17.0"
   },
+  "devDependencies": {
+    "electron": "^13.0.1",
+    "electron-packager": "^15.2.0"
+  },
+  "build": {
+    "extraResources": [
+      {
+        "from": "./tools",
+        "to": "tools",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package": "electron-packager ./ ClientTools --out ./package --app-version 1.0.0 --overwrite --asar --icon=./src/icon/app.ico --extra-resource='./tools'"
   },
   "keywords": [],
   "author": "",

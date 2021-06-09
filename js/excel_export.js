@@ -1,9 +1,12 @@
 const XLSX = require('xlsx')
 const fs = require('fs')
 
-const TEMPLATE_PATH = './tools/excel_export/template/template.txt'
-const CLIENT_RESULT_PATH = './tools/excel_export/result/client/#file_name#.lua'
-const SERVER_RESULT_PATH = './tools/excel_export/result/server/#file_name#.xml'
+const TEMPLATE_PATH = __dirname + '/../tools/excel_export/template/template.txt'
+const desktopPath = require('path').join(require('os').homedir(), 'Desktop')
+const CLIENT_RESULT_PATH = desktopPath + '/client/'
+const SERVER_RESULT_PATH = desktopPath + '/server/'
+
+let totalFileNum = 0
 
 const CSVToArray = (data, delimiter = ',', omitFirstRow = false) =>
     data
@@ -75,17 +78,18 @@ let dropHandler = function(e) {
         return
     }
 
+    let template = readLocalFileSync(TEMPLATE_PATH)
+    totalFileNum = 2 * fileList.length
     for (let i = 0; i < fileList.length; i++) {
         let file = fileList[i]
-        processExcelFile(file)
+        processExcelFile(file, template)
     }
 }
 
-function processExcelFile(file) {
-    let template = readLocalFileSync(TEMPLATE_PATH)
-
+function processExcelFile(file, template) {
     readWorkbookFromLocalFile(file, function(workbook){
-        formatWorkbookData(workbook, file, template)
+        formatWorkbookDataToLua(workbook, file, template)
+        formatWorkbookDataToXml(workbook, file)
     })
 }
 
@@ -99,11 +103,11 @@ function readWorkbookFromLocalFile(file, callback) {
 	reader.readAsBinaryString(file)
 }
 
-function formatWorkbookData(workbook, file, template) {
+function formatWorkbookDataToLua(workbook, file, template) {
     // 替换模板中的文件名
     let fullFileName = (file.name).toString()
     let fileName = fullFileName.match(/.*(?=\.)/g)[0]
-    template = template.replace(/#cfg_name#/g, fileName)
+    let luaContent = template.replace(/#cfg_name#/g, fileName)
 
     let sheetNames = workbook.SheetNames
     let worksheet = workbook.Sheets[sheetNames[SHEET_INDEX - 1]]
@@ -145,8 +149,8 @@ function formatWorkbookData(workbook, file, template) {
             }
         }
     }
-    template = template.replace(/#cfg_all_keys#/g, allKeyInfo)
-    template = template.replace(/#key_map#/g, keyMap)
+    luaContent = luaContent.replace(/#cfg_all_keys#/g, allKeyInfo)
+    luaContent = luaContent.replace(/#key_map#/g, keyMap)
 
     // 替换所有数据
     let allCfgData = ''
@@ -160,7 +164,9 @@ function formatWorkbookData(workbook, file, template) {
         for (let i = 0; i < rowInfo.length; i++) {
             const data = rowInfo[i];
             let value = data
-            if (valueTypeList[i] == 'string') {
+            if (value == "") {
+                value = valueTypeList[i] == 'int' ? '0' : '\"\"'
+            } else if (valueTypeList[i] == 'string') {
                 value = '\"' + value + '\"'
             }
 
@@ -172,7 +178,7 @@ function formatWorkbookData(workbook, file, template) {
         
         allCfgData += cfgData + '}\n'
     }
-    template = template.replace(/#cfg_all_data#/g, allCfgData)
+    luaContent = luaContent.replace(/#cfg_all_data#/g, allCfgData)
 
     // 替换key相关
     let keyGroup = ''
@@ -189,9 +195,9 @@ function formatWorkbookData(workbook, file, template) {
             uniqueKeyLink += ' .. _ .. '
         }
     }
-    template = template.replace(/#unique_key_group#/g, keyGroup)
-    template = template.replace(/#key_params#/g, keyParams)
-    template = template.replace(/#unique_key_link#/g, uniqueKeyLink)
+    luaContent = luaContent.replace(/#unique_key_group#/g, keyGroup)
+    luaContent = luaContent.replace(/#key_params#/g, keyParams)
+    luaContent = luaContent.replace(/#unique_key_link#/g, uniqueKeyLink)
 
     // 替换反向索引
     let keyReverseIndex = ''
@@ -213,9 +219,70 @@ function formatWorkbookData(workbook, file, template) {
         keyGroupValue = '\"' + keyGroupValue + '\"'
         keyReverseIndex += '    [' + keyGroupValue + '] = ' + (row - ROW_MAP.VALUE_START + 1) + ',\n'
     }
-    template = template.replace(/#key_reverse_index#/g, keyReverseIndex)
+    luaContent = luaContent.replace(/#key_reverse_index#/g, keyReverseIndex)
 
-    saveFile(CLIENT_RESULT_PATH.replace(/#file_name#/g, fileName), template)
+    saveFile(CLIENT_RESULT_PATH, fileName + '.lua', luaContent)
+}
+
+function formatWorkbookDataToXml(workbook, file) {
+    // 替换模板中的文件名
+    let fullFileName = (file.name).toString()
+    let fileName = fullFileName.match(/.*(?=\.)/g)[0]
+    let xmlContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
+
+    let sheetNames = workbook.SheetNames
+    let worksheet = workbook.Sheets[sheetNames[SHEET_INDEX - 1]]
+
+    let a1 = worksheet['A1'].v
+    let keyList = a1.split(',')
+
+    // TODO validate sheet correction
+
+    let csv = XLSX.utils.sheet_to_csv(worksheet)
+    let sheetArray = CSVToArray(csv, ',', true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
+
+    let valueTypeList = sheetArray[ROW_MAP.VALUE_TYPE]
+    let keyDescList = sheetArray[ROW_MAP.KEY_DESC]
+    let isServerClientList = sheetArray[ROW_MAP.SERVER_CLIENT]
+    let keyNameList = sheetArray[ROW_MAP.KEY_NAME]
+
+    // 替换字段索引
+    xmlContent += '<!-- '
+    for (let i = 0; i < keyNameList.length; i++) {
+        let isServerClient = isServerClientList[i]
+        const curKey = keyNameList[i]
+        if (isServerClient == KEY_TYPE.SERVER || isServerClient == KEY_TYPE.BOTH) {
+            let defaultValue = valueTypeList[i] == 'int' ? '0' : '\"\"' 
+            let keyInfo = curKey + '=' + keyDescList[i] + ' '
+            xmlContent += keyInfo
+        }
+    }
+    xmlContent = xmlContent + '-->\n<root>\n'
+
+    // 替换所有数据
+    for (let row = ROW_MAP.VALUE_START; row < sheetArray.length; row++) {
+        const rowInfo = sheetArray[row];
+        if (rowInfo[0] == '') {
+            break
+        }
+
+        xmlContent += '    <data '
+        for (let i = 0; i < rowInfo.length; i++) {
+            let isServerClient = isServerClientList[i]
+            if (isServerClient == KEY_TYPE.SERVER || isServerClient == KEY_TYPE.BOTH) {
+                const curKey = keyNameList[i]
+                const data = rowInfo[i];
+                let value = data
+                value = '\"' + value + '\"'
+                xmlContent += curKey + '=' + value + ' '
+            }
+        }
+        xmlContent += '/>\n'
+    }
+
+    xmlContent += '</root>'
+    saveFile(SERVER_RESULT_PATH, fileName + '.xml', xmlContent)
+
 }
 
 function readLocalFile(path, callback) {
@@ -241,14 +308,19 @@ function readLocalFileSync(path) {
     return data.toString()
 }
 
-function convertToLuaFile() {
-
-}
-
-function saveFile(path, content) {
-    fs.writeFile(path, content,  function(err) {
-        if (err) {
-            return console.error(err)
+function saveFile(path, fileName, content) {
+    fs.mkdir(path, function(error){
+        fs.writeFile(path + fileName, content,  function(error) {
+            if (error) {
+                return console.error(error)
+            }
+            totalFileNum -= 1
+            if (totalFileNum <= 0) {
+                alert("finish")
+            }
+        })
+        if(error){
+            return console.error(error)
         }
     })
 }
