@@ -1,14 +1,22 @@
 const XLSX = require('xlsx')
 const fs = require('fs')
 
+const DEBUG = false // 打包时需要改成false
+// debug 命令 ./node_modules/.bin/electron .
+// 打包命令 npm run package
+
 const TEMPLATE_PATH = __dirname + '/../tools/excel_export/template/template.txt'
 const desktopPath = require('path').join(require('os').homedir(), 'Desktop')
 const CLIENT_RESULT_PATH = desktopPath + '/client/'
 const SERVER_RESULT_PATH = desktopPath + '/server/'
+const DELIMITER = '#FS#'
+
+const CRLF_EOL = '\r\n'
+// const LF_EOL = '\n'
 
 let totalFileNum = 0
 
-const CSVToArray = (data, delimiter = ',', omitFirstRow = false) =>
+const CSVToArray = (data, delimiter = DELIMITER, omitFirstRow = false) =>
     data
         .slice(omitFirstRow ? data.indexOf('\n') + 1 : 0)
         .split('\n')
@@ -78,7 +86,12 @@ let dropHandler = function(e) {
         return
     }
 
-    let template = readLocalFileSync(TEMPLATE_PATH)
+    let template = null
+    if (DEBUG) {
+        template = readLocalFileSync(__dirname + '/tools/excel_export/template/template.txt')
+    } else {
+        template = readLocalFileSync(TEMPLATE_PATH)
+    }
     totalFileNum = 2 * fileList.length
     for (let i = 0; i < fileList.length; i++) {
         let file = fileList[i]
@@ -117,8 +130,9 @@ function formatWorkbookDataToLua(workbook, file, template) {
 
     // TODO validate sheet correction
 
-    let csv = XLSX.utils.sheet_to_csv(worksheet)
-    let sheetArray = CSVToArray(csv, ',', true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
+    let csv = XLSX.utils.sheet_to_csv(worksheet, {FS: DELIMITER, rawNumbers: true})
+    // console.log(csv)
+    let sheetArray = CSVToArray(csv, DELIMITER, true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
 
     let valueTypeList = sheetArray[ROW_MAP.VALUE_TYPE]
     let keyDescList = sheetArray[ROW_MAP.KEY_DESC]
@@ -135,11 +149,11 @@ function formatWorkbookDataToLua(workbook, file, template) {
         let isServerClient = isServerClientList[i]
         const curKey = keyNameList[i]
         if (isServerClient == KEY_TYPE.CLIENT || isServerClient == KEY_TYPE.BOTH) {
-            let defaultValue = valueTypeList[i] == 'int' ? '0' : '\"\"' 
+            let defaultValue = valueTypeList[i] == 'int' || valueTypeList[i] == 'int64' ? '0' : '\"\"' 
             let keyInfo = 'record_' + fileName + '.' + curKey + ' = ' + defaultValue + ' -- ' + keyDescList[i]
-            allKeyInfo += keyInfo + '\n'
+            allKeyInfo += keyInfo + CRLF_EOL
 
-            keyMap += '    ' + curKey + ' = ' + keyIndex + '\n'
+            keyMap += '    ' + curKey + ' = ' + keyIndex + ',' + CRLF_EOL
             keyIndex += 1
         }
         for (let index = 0; index < keyList.length; index++) {
@@ -160,11 +174,11 @@ function formatWorkbookDataToLua(workbook, file, template) {
             break
         }
 
-        let cfgData = '        [' + (row - ROW_MAP.VALUE_START + 1) + '] = {'
+        let cfgData = '    [' + (row - ROW_MAP.VALUE_START + 1) + '] = {'
         for (let i = 0; i < rowInfo.length; i++) {
             const data = rowInfo[i];
             let value = data
-            if (value == "") {
+            if (value == '') {
                 value = valueTypeList[i] == 'int' ? '0' : '\"\"'
             } else if (valueTypeList[i] == 'string') {
                 value = '\"' + value + '\"'
@@ -176,7 +190,7 @@ function formatWorkbookDataToLua(workbook, file, template) {
             }
         }
         
-        allCfgData += cfgData + '}\n'
+        allCfgData += cfgData + '},' + CRLF_EOL
     }
     luaContent = luaContent.replace(/#cfg_all_data#/g, allCfgData)
 
@@ -207,20 +221,29 @@ function formatWorkbookDataToLua(workbook, file, template) {
             break
         }
         let keyGroupValue = ''
+        let isString = false
         for (let i = 0; i < rowInfo.length; i++) {
             if (keyIndexMap[i]) {
                 const data = rowInfo[i];
                 if (keyGroupValue != '') {
-                    keyGroupValue += '_'
+                    keyGroupValue += '_' + data
+                    isString = true
+                } else {
+                    keyGroupValue = data
                 }
-                keyGroupValue += data
             }
         }
-        keyGroupValue = '\"' + keyGroupValue + '\"'
-        keyReverseIndex += '    [' + keyGroupValue + '] = ' + (row - ROW_MAP.VALUE_START + 1) + ',\n'
+        if (isString) {
+            keyGroupValue = '\"' + keyGroupValue + '\"'
+        }
+
+        keyReverseIndex += '    [' + keyGroupValue + '] = ' + (row - ROW_MAP.VALUE_START + 1) + ',' + CRLF_EOL
     }
     luaContent = luaContent.replace(/#key_reverse_index#/g, keyReverseIndex)
 
+    if (DEBUG) {
+        console.log(luaContent)
+    }
     saveFile(CLIENT_RESULT_PATH, fileName + '.lua', luaContent)
 }
 
@@ -228,18 +251,18 @@ function formatWorkbookDataToXml(workbook, file) {
     // 替换模板中的文件名
     let fullFileName = (file.name).toString()
     let fileName = fullFileName.match(/.*(?=\.)/g)[0]
-    let xmlContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    let xmlContent = '<?xml version="1.0" encoding="UTF-8"?>' + CRLF_EOL
 
     let sheetNames = workbook.SheetNames
     let worksheet = workbook.Sheets[sheetNames[SHEET_INDEX - 1]]
 
     let a1 = worksheet['A1'].v
-    let keyList = a1.split(',')
 
     // TODO validate sheet correction
 
-    let csv = XLSX.utils.sheet_to_csv(worksheet)
-    let sheetArray = CSVToArray(csv, ',', true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
+    let csv = XLSX.utils.sheet_to_csv(worksheet, {FS: DELIMITER, rawNumbers: true})
+    // console.log(csv)
+    let sheetArray = CSVToArray(csv, DELIMITER, true) // excel表sheet的二维数组 忽略第一行（第一行表示该表的uniquekey）
 
     let valueTypeList = sheetArray[ROW_MAP.VALUE_TYPE]
     let keyDescList = sheetArray[ROW_MAP.KEY_DESC]
@@ -252,12 +275,12 @@ function formatWorkbookDataToXml(workbook, file) {
         let isServerClient = isServerClientList[i]
         const curKey = keyNameList[i]
         if (isServerClient == KEY_TYPE.SERVER || isServerClient == KEY_TYPE.BOTH) {
-            let defaultValue = valueTypeList[i] == 'int' ? '0' : '\"\"' 
+            let defaultValue = valueTypeList[i] == 'int' || valueTypeList[i] == 'int64' ? '0' : '\"\"' 
             let keyInfo = curKey + '=' + keyDescList[i] + ' '
             xmlContent += keyInfo
         }
     }
-    xmlContent = xmlContent + '-->\n<root>\n'
+    xmlContent = xmlContent + '-->' + CRLF_EOL + '<root>' + CRLF_EOL
 
     // 替换所有数据
     for (let row = ROW_MAP.VALUE_START; row < sheetArray.length; row++) {
@@ -277,14 +300,19 @@ function formatWorkbookDataToXml(workbook, file) {
                 xmlContent += curKey + '=' + value + ' '
             }
         }
-        xmlContent += '/>\n'
+        xmlContent += ' />' + CRLF_EOL
     }
 
     xmlContent += '</root>'
-    saveFile(SERVER_RESULT_PATH, fileName + '.xml', xmlContent)
 
+
+    if (DEBUG) {
+        console.log(xmlContent)
+    }
+    saveFile(SERVER_RESULT_PATH, fileName + '.xml', xmlContent)
 }
 
+// 异步读取
 function readLocalFile(path, callback) {
     fs.readFile(path, function(err, data) {
         if (err) {
@@ -308,6 +336,7 @@ function readLocalFileSync(path) {
     return data.toString()
 }
 
+// 保存文件
 function saveFile(path, fileName, content) {
     fs.mkdir(path, function(error){
         fs.writeFile(path + fileName, content,  function(error) {
